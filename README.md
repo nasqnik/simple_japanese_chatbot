@@ -1,6 +1,7 @@
 ## simple_japanese_chatbot
 
 A tiny CLI Japanese chatbot using the OpenAI API.
+It was created to test different models and different settings, but more on that soon.
 
 ### What it does
 
