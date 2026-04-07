@@ -1,7 +1,9 @@
-## simple_japanese_chatbot
+## simple_japanese_chatbot 
+**Status**: *in progress*
 
-A tiny CLI Japanese chatbot using the OpenAI API.
-It was created to test different models and different settings, but more on that soon.
+A tiny CLI Japanese chatbot using the OpenRouter API.
+Currently wired model - Google Gemma 4.
+The chatbot was created to test different models and different settings, but more on that soon.
 
 ### What it does
 
