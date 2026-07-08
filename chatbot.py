@@ -1,3 +1,10 @@
+"""
+CLI chatbot: HTTP calls go to OpenRouter (cloud) or to llama.cpp on this machine (local).
+
+Uses the third-party `openai` Python package only as a client for the common
+`/v1/chat/completions` JSON API. That is the same wire format OpenRouter exposes;
+it does not send traffic to OpenAI's api.openai.com unless you point LLM_BASE_URL there.
+"""
 import os
 import sys
 from dotenv import load_dotenv
@@ -29,7 +36,9 @@ SYSTEM_PROMPT = """あなたは日本語の会話パートナーです。あか�
 - なおしはみじかく。ぜんぶなおさない（いちばん大事な1つだけ）。
 """
 
-MODEL = "google/gemma-4-26b-a4b-it"
+DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1"
+DEFAULT_OPENROUTER_MODEL = "google/gemma-4-26b-a4b-it"
+
 PROVIDER_PREFS = {
     "provider": {
         "order": ["parasail/bf16"],
@@ -38,23 +47,43 @@ PROVIDER_PREFS = {
 }
 
 
-def call_chat(client: OpenAI, messages: list[dict]) -> str:
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=messages,
-        extra_body=PROVIDER_PREFS,
-    )
-    return resp.choices[0].message.content.strip()
+def _is_local_llm_url(url: str) -> bool:
+    u = url.lower().split("://", 1)[-1]
+    return u.startswith("127.0.0.1") or u.startswith("localhost")
+
+
+def call_chat(client: OpenAI, messages: list[dict], *, model: str, use_parasail_prefs: bool) -> str:
+    kwargs: dict = {"model": model, "messages": messages}
+    if use_parasail_prefs:
+        kwargs["extra_body"] = PROVIDER_PREFS
+    resp = client.chat.completions.create(**kwargs)
+    content = resp.choices[0].message.content
+    return (content or "").strip()
 
 def main():
     load_dotenv()
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    base_url = os.getenv("LLM_BASE_URL", DEFAULT_OPENROUTER_URL).rstrip("/")
+    model = os.getenv("LLM_MODEL", DEFAULT_OPENROUTER_MODEL)
+    api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        raise SystemExit("Missing OPENROUTER_API_KEY. Put it in .env or your environment before running.")
-    
+        if _is_local_llm_url(base_url):
+            api_key = "local"
+        else:
+            raise SystemExit(
+                "Missing API key. Set OPENROUTER_API_KEY for OpenRouter, "
+                "or run Tiny Aya locally: LLM_BASE_URL=http://127.0.0.1:8080/v1 and LLM_API_KEY=local "
+                "(see scripts/run_tiny_aya_fire.sh)."
+            )
+
+    use_parasail_prefs = (
+        "openrouter.ai" in base_url
+        and "gemma" in model.lower()
+        and os.getenv("LLM_OPENROUTER_PARASAIL", "1") not in {"0", "false", "no"}
+    )
+
     client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=api_key,
+        base_url=base_url,
+        api_key=api_key,
     )
 
     print("Hi. I'm your Japanese-exchange friend 🇯🇵")
@@ -74,7 +103,7 @@ def main():
         history.append({"role": "user", "content": user_text})
 
         try:
-            bot_text = call_chat(client, history)
+            bot_text = call_chat(client, history, model=model, use_parasail_prefs=use_parasail_prefs)
         except (AuthenticationError, 
                 RateLimitError,
                 APIConnectionError,
@@ -97,6 +126,8 @@ def main():
                 bot_text = call_chat(
                     client,
                     [{"role": "user", "content": rewrite_prompt}],
+                    model=model,
+                    use_parasail_prefs=use_parasail_prefs,
                 )
             except (AuthenticationError, 
                     RateLimitError,
